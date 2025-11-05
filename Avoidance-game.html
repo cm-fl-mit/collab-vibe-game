@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neon Avoidance - Multiplayer Game</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: #0a0a0a;
+            color: #00ff00;
+            font-family: 'Press Start 2P', cursive;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+        
+        #gameContainer {
+            position: relative;
+            width: 800px;
+            height: 600px;
+            border: 3px solid #00ff00;
+            box-shadow: 0 0 30px #00ff00, inset 0 0 30px rgba(0, 255, 0, 0.1);
+            background: radial-gradient(ellipse at center, rgba(0, 255, 0, 0.05) 0%, transparent 70%);
+        }
+        
+        #gameCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            image-rendering: pixelated;
+        }
+        
+        #scoreBoard {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            font-size: 12px;
+            line-height: 1.8;
+            text-shadow: 0 0 10px currentColor;
+            z-index: 10;
+        }
+        
+        #connectionStatus {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            font-size: 10px;
+            z-index: 10;
+        }
+        
+        .connected {
+            color: #00ff00;
+            text-shadow: 0 0 10px #00ff00;
+        }
+        
+        .disconnected {
+            color: #ff0040;
+            text-shadow: 0 0 10px #ff0040;
+        }
+        
+        #controls {
+            margin-top: 20px;
+            text-align: center;
+            font-size: 10px;
+            color: #00ff00;
+            opacity: 0.7;
+        }
+        
+        #setupModal {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #0a0a0a;
+            border: 3px solid #00ff00;
+            padding: 30px;
+            box-shadow: 0 0 50px #00ff00;
+            z-index: 1000;
+            text-align: center;
+        }
+        
+        #setupModal h2 {
+            color: #00ff00;
+            margin-bottom: 20px;
+            text-shadow: 0 0 20px #00ff00;
+        }
+        
+        #setupModal input {
+            background: #1a1a1a;
+            border: 2px solid #00ff00;
+            color: #00ff00;
+            padding: 10px;
+            font-family: 'Press Start 2P', cursive;
+            font-size: 10px;
+            margin: 10px 0;
+            width: 250px;
+            text-align: center;
+        }
+        
+        #setupModal button {
+            background: #00ff00;
+            color: #0a0a0a;
+            border: none;
+            padding: 10px 20px;
+            font-family: 'Press Start 2P', cursive;
+            font-size: 10px;
+            cursor: pointer;
+            margin-top: 10px;
+            transition: all 0.3s;
+        }
+        
+        #setupModal button:hover {
+            box-shadow: 0 0 20px #00ff00;
+            transform: scale(1.05);
+        }
+        
+        #setupModal button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .hidden {
+            display: none !important;
+        }
+        
+        #playerName {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            font-size: 10px;
+            color: #00ff00;
+            text-shadow: 0 0 10px #00ff00;
+        }
+        
+        #loadingStatus {
+            font-size: 8px;
+            color: #ffff00;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="setupModal">
+        <h2>NEON AVOIDANCE</h2>
+        <input type="text" id="nameInput" placeholder="Enter your name" maxlength="15">
+        <br>
+        <input type="text" id="roomInput" placeholder="Room code (optional)" maxlength="20">
+        <br>
+        <button id="startButton" onclick="startGame()">START GAME</button>
+        <div id="loadingStatus"></div>
+        <div style="margin-top: 20px; font-size: 8px; color: #00ff00; opacity: 0.5;">
+            Share room code with friends to play together
+        </div>
+    </div>
+    
+    <div id="gameContainer" class="hidden">
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <div id="scoreBoard"></div>
+        <div id="connectionStatus" class="disconnected">CONNECTING...</div>
+        <div id="playerName"></div>
+    </div>
+    
+    <div id="controls" class="hidden">
+        Use ARROW KEYS to move • Avoid other players • Survive as long as possible
+    </div>
+
+    <!-- Firebase SDK v10 with compatibility mode -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-database-compat.js"></script>
+    
+    <script>
+        // Game configuration
+        const GAME_WIDTH = 800;
+        const GAME_HEIGHT = 600;
+        const PLAYER_SIZE = 20;
+        const PLAYER_SPEED = 3;
+        const COLLISION_DISTANCE = PLAYER_SIZE * 2;
+        const NEON_COLORS = ['#00ff00', '#ff00ff', '#00ffff', '#ffff00', '#ff0080', '#80ff00', '#ff8000', '#00ff80'];
+        
+        // Your Firebase configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyDx4fth1XFw23DHu3THhhJ2hFkXqdE24gk",
+            authDomain: "collab-game.firebaseapp.com",
+            databaseURL: "https://collab-game-default-rtdb.firebaseio.com",
+            projectId: "collab-game",
+            storageBucket: "collab-game.firebasestorage.app",
+            messagingSenderId: "627936593790",
+            appId: "1:627936593790:web:e40cb61a1ccd07219f552f"
+        };
+        
+        // Game state
+        let canvas, ctx;
+        let playerId;
+        let playerName = 'Player';
+        let roomCode = 'default';
+        let players = {};
+        let myPlayer = null;
+        let database;
+        let playersRef;
+        let startTime;
+        let isConnected = false;
+        let keys = {};
+        let animationId;
+        let collisionSound;
+        let firebaseInitialized = false;
+        
+        // Check if Firebase is loaded
+        window.addEventListener('load', () => {
+            checkFirebaseLoaded();
+        });
+        
+        function checkFirebaseLoaded() {
+            const loadingStatus = document.getElementById('loadingStatus');
+            const startButton = document.getElementById('startButton');
+            
+            if (typeof firebase !== 'undefined') {
+                loadingStatus.textContent = 'Firebase loaded! Ready to play.';
+                loadingStatus.style.color = '#00ff00';
+                startButton.disabled = false;
+                firebaseInitialized = true;
+                console.log('Firebase SDK loaded successfully');
+            } else {
+                loadingStatus.textContent = 'Loading Firebase...';
+                loadingStatus.style.color = '#ffff00';
+                startButton.disabled = true;
+                // Retry after a short delay
+                setTimeout(checkFirebaseLoaded, 500);
+            }
+        }
+        
+        // Initialize Firebase
+        function initFirebase() {
+            try {
+                // Double-check Firebase is available
+                if (typeof firebase === 'undefined') {
+                    throw new Error('Firebase SDK not loaded. Please refresh the page.');
+                }
+                
+                // Initialize Firebase app if not already initialized
+                if (!firebase.apps.length) {
+                    firebase.initializeApp(firebaseConfig);
+                    console.log('Firebase app initialized');
+                }
+                
+                // Get database reference
+                database = firebase.database();
+                
+                // Set up connection listener
+                const connectedRef = database.ref('.info/connected');
+                connectedRef.on('value', (snapshot) => {
+                    isConnected = snapshot.val() === true;
+                    updateConnectionStatus();
+                    console.log('Firebase connection status:', isConnected);
+                });
+                
+                return true;
+            } catch (error) {
+                console.error('Firebase initialization error:', error);
+                alert('Error: ' + error.message + '\n\nPlease refresh the page and try again.');
+                return false;
+            }
+        }
+        
+        // Start the game
+        function startGame() {
+            if (!firebaseInitialized) {
+                alert('Firebase is still loading. Please wait a moment.');
+                return;
+            }
+            
+            playerName = document.getElementById('nameInput').value.trim() || 'Player' + Math.floor(Math.random() * 1000);
+            roomCode = document.getElementById('roomInput').value.trim() || 'default';
+            
+            document.getElementById('playerName').textContent = `${playerName} • Room: ${roomCode}`;
+            
+            if (!initFirebase()) {
+                return;
+            }
+            
+            // Hide setup modal, show game
+            document.getElementById('setupModal').classList.add('hidden');
+            document.getElementById('gameContainer').classList.remove('hidden');
+            document.getElementById('controls').classList.remove('hidden');
+            
+            // Initialize canvas
+            canvas = document.getElementById('gameCanvas');
+            ctx = canvas.getContext('2d');
+            
+            // Generate unique player ID
+            playerId = 'player_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            
+            // Setup Firebase references for this room
+            playersRef = database.ref(`rooms/${roomCode}/players`);
+            
+            // Create player
+            createPlayer();
+            
+            // Setup listeners
+            setupFirebaseListeners();
+            setupKeyboardListeners();
+            
+            // Create collision sound
+            createCollisionSound();
+            
+            // Start game loop
+            startTime = Date.now();
+            gameLoop();
+        }
+        
+        // Create collision sound using Web Audio API
+        function createCollisionSound() {
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            if (AudioContext) {
+                const audioContext = new AudioContext();
+                collisionSound = () => {
+                    const oscillator = audioContext.createOscillator();
+                    const gainNode = audioContext.createGain();
+                    
+                    oscillator.connect(gainNode);
+                    gainNode.connect(audioContext.destination);
+                    
+                    oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(50, audioContext.currentTime + 0.2);
+                    
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+                    
+                    oscillator.start(audioContext.currentTime);
+                    oscillator.stop(audioContext.currentTime + 0.2);
+                };
+            } else {
+                collisionSound = () => {}; // Fallback
+            }
+        }
+        
+        // Create player
+        function createPlayer() {
+            const startX = Math.random() * (GAME_WIDTH - PLAYER_SIZE * 2) + PLAYER_SIZE;
+            const startY = Math.random() * (GAME_HEIGHT - PLAYER_SIZE * 2) + PLAYER_SIZE;
+            const colorIndex = Math.floor(Math.random() * NEON_COLORS.length);
+            
+            myPlayer = {
+                x: startX,
+                y: startY,
+                color: NEON_COLORS[colorIndex],
+                name: playerName,
+                score: 0,
+                lastCollision: 0,
+                lastUpdate: Date.now()
+            };
+            
+            // Add to Firebase
+            playersRef.child(playerId).set(myPlayer).catch(error => {
+                console.error('Error adding player to Firebase:', error);
+            });
+        }
+        
+        // Setup Firebase listeners
+        function setupFirebaseListeners() {
+            // Listen for player updates
+            playersRef.on('value', (snapshot) => {
+                const data = snapshot.val();
+                players = data || {};
+            }, (error) => {
+                console.error('Firebase listener error:', error);
+            });
+            
+            // Remove player on disconnect
+            playersRef.child(playerId).onDisconnect().remove();
+            
+            // Clean up old players (inactive for more than 30 seconds)
+            setInterval(() => {
+                const now = Date.now();
+                Object.keys(players).forEach(id => {
+                    if (id !== playerId && players[id].lastUpdate && now - players[id].lastUpdate > 30000) {
+                        playersRef.child(id).remove();
+                    }
+                });
+            }, 5000);
+        }
+        
+        // Setup keyboard listeners
+        function setupKeyboardListeners() {
+            document.addEventListener('keydown', (e) => {
+                if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+                    e.preventDefault();
+                    keys[e.key] = true;
+                }
+            });
+            
+            document.addEventListener('keyup', (e) => {
+                if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+                    e.preventDefault();
+                    keys[e.key] = false;
+                }
+            });
+        }
+        
+        // Update player position
+        function updatePlayer() {
+            if (!myPlayer || !isConnected) return;
+            
+            let moved = false;
+            
+            if (keys['ArrowUp'] && myPlayer.y > PLAYER_SIZE) {
+                myPlayer.y -= PLAYER_SPEED;
+                moved = true;
+            }
+            if (keys['ArrowDown'] && myPlayer.y < GAME_HEIGHT - PLAYER_SIZE) {
+                myPlayer.y += PLAYER_SPEED;
+                moved = true;
+            }
+            if (keys['ArrowLeft'] && myPlayer.x > PLAYER_SIZE) {
+                myPlayer.x -= PLAYER_SPEED;
+                moved = true;
+            }
+            if (keys['ArrowRight'] && myPlayer.x < GAME_WIDTH - PLAYER_SIZE) {
+                myPlayer.x += PLAYER_SPEED;
+                moved = true;
+            }
+            
+            // Check collisions
+            checkCollisions();
+            
+            // Update score
+            const now = Date.now();
+            if (now - myPlayer.lastCollision > 1000) {
+                myPlayer.score = Math.floor((now - Math.max(startTime, myPlayer.lastCollision)) / 1000);
+            }
+            
+            // Update Firebase
+            if (moved || now - myPlayer.lastUpdate > 100) {
+                myPlayer.lastUpdate = now;
+                playersRef.child(playerId).update({
+                    x: myPlayer.x,
+                    y: myPlayer.y,
+                    score: myPlayer.score,
+                    lastUpdate: now
+                }).catch(error => {
+                    console.error('Error updating player:', error);
+                });
+            }
+        }
+        
+        // Check collisions
+        function checkCollisions() {
+            const now = Date.now();
+            if (now - myPlayer.lastCollision < 1000) return; // Immunity period
+            
+            Object.keys(players).forEach(id => {
+                if (id !== playerId && players[id]) {
+                    const other = players[id];
+                    const dx = myPlayer.x - other.x;
+                    const dy = myPlayer.y - other.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (distance < COLLISION_DISTANCE) {
+                        handleCollision();
+                    }
+                }
+            });
+        }
+        
+        // Handle collision
+        function handleCollision() {
+            const now = Date.now();
+            myPlayer.lastCollision = now;
+            myPlayer.score = 0;
+            
+            // Reset position
+            myPlayer.x = Math.random() * (GAME_WIDTH - PLAYER_SIZE * 2) + PLAYER_SIZE;
+            myPlayer.y = Math.random() * (GAME_HEIGHT - PLAYER_SIZE * 2) + PLAYER_SIZE;
+            
+            // Play sound
+            collisionSound();
+            
+            // Flash effect
+            document.getElementById('gameContainer').style.boxShadow = '0 0 50px #ff0040, inset 0 0 50px rgba(255, 0, 64, 0.3)';
+            setTimeout(() => {
+                document.getElementById('gameContainer').style.boxShadow = '0 0 30px #00ff00, inset 0 0 30px rgba(0, 255, 0, 0.1)';
+            }, 200);
+            
+            // Update Firebase
+            playersRef.child(playerId).update({
+                x: myPlayer.x,
+                y: myPlayer.y,
+                score: 0,
+                lastCollision: now
+            });
+        }
+        
+        // Render game
+        function render() {
+            // Clear canvas
+            ctx.fillStyle = 'rgba(10, 10, 10, 0.1)';
+            ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+            
+            // Draw grid
+            ctx.strokeStyle = 'rgba(0, 255, 0, 0.02)';
+            ctx.lineWidth = 1;
+            for (let i = 0; i < GAME_WIDTH; i += 50) {
+                ctx.beginPath();
+                ctx.moveTo(i, 0);
+                ctx.lineTo(i, GAME_HEIGHT);
+                ctx.stroke();
+            }
+            for (let i = 0; i < GAME_HEIGHT; i += 50) {
+                ctx.beginPath();
+                ctx.moveTo(0, i);
+                ctx.lineTo(GAME_WIDTH, i);
+                ctx.stroke();
+            }
+            
+            // Draw players
+            Object.keys(players).forEach(id => {
+                const player = players[id];
+                if (!player) return;
+                
+                const isMe = id === playerId;
+                const now = Date.now();
+                const isImmune = isMe && now - myPlayer.lastCollision < 1000;
+                
+                // Draw glow
+                ctx.shadowBlur = isMe ? 20 : 10;
+                ctx.shadowColor = player.color;
+                
+                // Draw circle
+                ctx.fillStyle = isImmune && Math.floor(now / 100) % 2 ? 'transparent' : player.color;
+                ctx.beginPath();
+                ctx.arc(player.x, player.y, PLAYER_SIZE, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Draw outline
+                ctx.strokeStyle = player.color;
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                
+                // Reset shadow
+                ctx.shadowBlur = 0;
+                
+                // Draw name
+                ctx.fillStyle = player.color;
+                ctx.font = '8px "Press Start 2P"';
+                ctx.textAlign = 'center';
+                ctx.fillText(player.name, player.x, player.y - PLAYER_SIZE - 5);
+                
+                // Trail for local player
+                if (isMe) {
+                    ctx.strokeStyle = player.color;
+                    ctx.lineWidth = 1;
+                    ctx.globalAlpha = 0.3;
+                    ctx.beginPath();
+                    ctx.arc(player.x, player.y, PLAYER_SIZE + 5, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.globalAlpha = 1;
+                }
+            });
+            
+            // Update scoreboard
+            updateScoreboard();
+        }
+        
+        // Update scoreboard
+        function updateScoreboard() {
+            const scoreBoard = document.getElementById('scoreBoard');
+            const sortedPlayers = Object.entries(players)
+                .map(([id, player]) => ({
+                    id,
+                    name: player.name,
+                    score: player.score || 0,
+                    color: player.color
+                }))
+                .sort((a, b) => b.score - a.score)
+                .slice(0, 5);
+            
+            let html = '<div style="color: #00ff00; margin-bottom: 10px;">LEADERBOARD</div>';
+            sortedPlayers.forEach((player, index) => {
+                const isMe = player.id === playerId;
+                html += `<div style="color: ${player.color}; ${isMe ? 'font-weight: bold;' : ''}">${index + 1}. ${player.name}: ${player.score}s</div>`;
+            });
+            
+            scoreBoard.innerHTML = html;
+        }
+        
+        // Update connection status
+        function updateConnectionStatus() {
+            const status = document.getElementById('connectionStatus');
+            if (isConnected) {
+                status.textContent = 'ONLINE';
+                status.className = 'connected';
+            } else {
+                status.textContent = 'OFFLINE';
+                status.className = 'disconnected';
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            updatePlayer();
+            render();
+            animationId = requestAnimationFrame(gameLoop);
+        }
+        
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (playersRef && playerId) {
+                playersRef.child(playerId).remove();
+            }
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+            }
+        });
+    </script>
+</body>
+</html>
